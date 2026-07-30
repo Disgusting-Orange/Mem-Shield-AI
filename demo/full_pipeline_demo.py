@@ -5,7 +5,10 @@ import logging
 
 import httpx
 import uvicorn
-
+import pathlib, sys
+# Add the project root (two levels up) to PYTHONPATH so sibling packages can be imported
+project_root = pathlib.Path(__file__).resolve().parent.parent
+sys.path.append(str(project_root))
 # -----------------------------------------------------------------
 # Settings
 # -----------------------------------------------------------------
@@ -26,9 +29,22 @@ def start_api():
 
 api_thread = threading.Thread(target=start_api, daemon=True)
 api_thread.start()
-log.info("Starting FastAPI server…")
-# Wait a moment for the server to be ready
-time.sleep(2)
+log.info("Starting FastAPI server (loading ML model, may take up to 60s on first run)...")
+
+# Poll until the server is actually accepting connections
+import httpx as _httpx
+for _attempt in range(90):
+    time.sleep(1)
+    try:
+        _httpx.get(f"{BASE_URL}/docs", timeout=1.0)
+        log.info("FastAPI server is ready!")
+        break
+    except Exception:
+        if _attempt % 10 == 9:
+            log.info("  still waiting for server... (%ds)", _attempt + 1)
+else:
+    log.error("Server did not start within 90 seconds – aborting.")
+    raise SystemExit(1)
 
 # -----------------------------------------------------------------
 # Helper to POST JSON and handle possible 400 errors with JSON body
@@ -40,11 +56,12 @@ def post(endpoint: str, payload: dict):
         resp.raise_for_status()
         return resp.json()
     except httpx.HTTPStatusError as exc:
-        # Return the error JSON payload if present (e.g., memory‑write rejection)
+        # Return the error JSON payload if present (e.g., memory-write rejection)
         try:
             return json.loads(exc.response.content)
         except Exception:
-            raise
+            log.error("HTTP %s from %s: %s", exc.response.status_code, endpoint, exc.response.text[:200])
+            return {"error": str(exc)}
 
 # -----------------------------------------------------------------
 # Simulated misbehaving agent steps

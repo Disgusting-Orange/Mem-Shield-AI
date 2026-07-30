@@ -4,7 +4,8 @@ from pydantic import BaseModel
 from typing import Any, Dict
 
 from memory_firewall import MemoryFirewall
-from execution_guardian import ExecutionGuardian, ExecutionStep
+from guardian import ExecutionGuardian
+from models import ExecutionStep
 
 # -------------------------------------------------------------
 # Logging – mimics CloudWatch (INFO for normal, WARNING for issues)
@@ -68,6 +69,8 @@ def write_memory(req: MemoryWriteRequest):
 # -------------------------------------------------------------
 @app.post("/agent/step")
 def post_step(req: AgentStepRequest):
+    from dataclasses import asdict
+
     step = ExecutionStep(
         agent_id=req.agent_id,
         step_id=req.step_id,
@@ -82,17 +85,25 @@ def post_step(req: AgentStepRequest):
     audit_report = guardian.audit(req.agent_id)
 
     if audit_report["loops"]:
-        log.warning("Loop detected for agent=%s – cycles: %s", req.agent_id, audit_report["loops"])
+        log.warning("Loop detected for agent=%s - cycles: %s", req.agent_id, audit_report["loops"])
     if audit_report["silent_failures"]:
         log.warning(
-            "Silent failures for agent=%s – steps: %s",
+            "Silent failures for agent=%s - steps: %s",
             req.agent_id,
             [s.step_id for s in audit_report["silent_failures"]],
         )
     if audit_report["redundant_calls"]:
         log.warning(
-            "Redundant calls for agent=%s – pairs: %s",
+            "Redundant calls for agent=%s - pairs: %s",
             req.agent_id,
             [(a.step_id, b.step_id) for a, b in audit_report["redundant_calls"]],
         )
-    return audit_report
+
+    # Convert dataclass objects to dicts so FastAPI can serialize them as JSON
+    return {
+        "loops": audit_report["loops"],
+        "silent_failures": [asdict(s) for s in audit_report["silent_failures"]],
+        "redundant_calls": [[asdict(a), asdict(b)] for a, b in audit_report["redundant_calls"]],
+        "estimated_cost_leak": audit_report["estimated_cost_leak"],
+    }
+

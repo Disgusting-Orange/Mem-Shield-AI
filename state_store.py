@@ -7,12 +7,12 @@ guardian.py never talks to AWS directly.
 """
 
 import sqlite3
-from .models import ExecutionStep
+from models import ExecutionStep
 
 
 class StateStore:
     def __init__(self, db_path: str = "agentguardian.db"):
-        self.conn = sqlite3.connect(db_path)
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self._create_table()
 
     def _create_table(self):
