@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+requests
+python-dotenv
+groq
+sentence-transformers
+torch
+networkx
+pydantic

@@ -1,7 +1,24 @@
-.venv/
-venv/
+# Byte-compiled / cache files
 __pycache__/
 *.pyc
-*.pyo
-*.db
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Environment files � keep them local only
 .env
+.env.*
+
+# IDE / editor junk
+.vscode/
+.idea/
+*.sublime-workspace
+
+# OS artefacts
+.DS_Store
+Thumbs.db
+
+# SQLite database
+*.db
