@@ -204,9 +204,10 @@ Mem-Shield-AI/
 ---
 
 ## 👥 Team
-
-**Disgusting Orange** — Frontier Hackathon 2026
-
+Frontier Hackathon 2026
+**Kamalesh N**  
+**S Priyankaa**  
+**Sai Abhishek D**  
 ---
 
 ## 📄 License
