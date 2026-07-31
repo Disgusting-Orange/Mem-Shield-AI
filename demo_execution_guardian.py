@@ -7,9 +7,11 @@ Run from the repo root: python demo/demo_execution_guardian.py
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(__file__))
 
-from execution_guardian import ExecutionStep, ExecutionGuardian, StateStore
+from models import ExecutionStep
+from guardian import ExecutionGuardian
+from state_store import StateStore
 
 if __name__ == "__main__":
     guardian = ExecutionGuardian(StateStore(":memory:"))

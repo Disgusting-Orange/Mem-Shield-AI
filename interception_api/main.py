@@ -1,3 +1,4 @@
+import os
 import logging
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -8,20 +9,55 @@ from guardian import ExecutionGuardian
 from models import ExecutionStep
 
 # -------------------------------------------------------------
-# Logging – mimics CloudWatch (INFO for normal, WARNING for issues)
+# Logging — JSON on Lambda, human-readable locally
 # -------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-)
+try:
+    from aws.logging_config import setup_logging
+    setup_logging()
+except ImportError:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    )
+
 log = logging.getLogger("interception_api")
 
+# -------------------------------------------------------------
+# Environment-aware wiring
+# On Lambda: DynamoDB + SNS | Locally: SQLite + console
+# -------------------------------------------------------------
+def _build_components():
+    """Construct guardian and firewall with the right backends."""
+    is_aws = "AWS_LAMBDA_FUNCTION_NAME" in os.environ
+
+    if is_aws:
+        log.info("Running on AWS Lambda — using DynamoDB + SNS backends.")
+        from aws.dynamo_store import DynamoStateStore
+        from aws.dynamo_history_store import DynamoHistoryStore
+        from aws.sns_alert_sink import SNSAlertSink
+
+        store = DynamoStateStore()
+        history = DynamoHistoryStore()
+        alert_sink = SNSAlertSink()
+    else:
+        log.info("Running locally — using SQLite + in-memory backends.")
+        from state_store import StateStore
+        from memory_firewall.firewall import InMemoryHistoryStore
+
+        store = StateStore()
+        history = InMemoryHistoryStore()
+        alert_sink = None  # no SNS locally
+
+    fw = MemoryFirewall(history_store=history)
+    gd = ExecutionGuardian(store=store, alert_sink=alert_sink)
+    return fw, gd
+
+
 app = FastAPI(title="Mem-Shield-AI Interception API")
-firewall = MemoryFirewall()
-guardian = ExecutionGuardian()
+firewall, guardian = _build_components()
 
 # -------------------------------------------------------------
-# Pydantic request models (kept simple as you requested)
+# Pydantic request models
 # -------------------------------------------------------------
 class MemoryWriteRequest(BaseModel):
     agent_id: str
@@ -37,6 +73,13 @@ class AgentStepRequest(BaseModel):
     result_payload: str = ""
     cost_estimate: float = 0.0
     timestamp: float = 0.0   # optional, can be omitted
+
+# -------------------------------------------------------------
+# Health check — required for monitoring / ALB / smoke tests
+# -------------------------------------------------------------
+@app.get("/health")
+def health():
+    return {"status": "healthy", "service": "mem-shield-ai"}
 
 # -------------------------------------------------------------
 # Endpoint: /memory/write
@@ -106,4 +149,3 @@ def post_step(req: AgentStepRequest):
         "redundant_calls": [[asdict(a), asdict(b)] for a, b in audit_report["redundant_calls"]],
         "estimated_cost_leak": audit_report["estimated_cost_leak"],
     }
-

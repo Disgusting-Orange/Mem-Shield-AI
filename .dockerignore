@@ -1,0 +1,12 @@
+.venv/
+.git/
+*.db
+__pycache__/
+.env
+demo/
+test_*
+demo_execution_guardian.py
+*.pyc
+*.log
+.gitignore
+README.md

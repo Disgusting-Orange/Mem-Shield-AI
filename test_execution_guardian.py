@@ -6,9 +6,11 @@ Basic tests for the Execution Runtime Guardian. Run with: pytest tests/
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 
-from execution_guardian import ExecutionStep, ExecutionGuardian, StateStore
+from models import ExecutionStep
+from guardian import ExecutionGuardian
+from state_store import StateStore
 
 
 def make_guardian():

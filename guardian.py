@@ -11,13 +11,19 @@ from collections import defaultdict
 from typing import Optional
 
 from models import ExecutionStep
+from interfaces import BaseStateStore, BaseAlertSink
 from state_store import StateStore
 from config import FAILURE_SIGNATURES, REDUNDANCY_WINDOW_SECONDS
 
 
 class ExecutionGuardian:
-    def __init__(self, store: Optional[StateStore] = None):
+    def __init__(
+        self,
+        store: Optional[BaseStateStore] = None,
+        alert_sink: Optional[BaseAlertSink] = None,
+    ):
         self.store = store or StateStore()
+        self.alert_sink = alert_sink
         # one directed graph per agent_id -> nodes are step_ids, edges are "next step"
         self.graphs: dict[str, nx.DiGraph] = defaultdict(nx.DiGraph)
         # keep recent steps in memory too, for fast redundancy checks
@@ -113,9 +119,30 @@ class ExecutionGuardian:
     # -- convenience: one call to check everything -------------------------
     def audit(self, agent_id: str) -> dict:
         """Run all checks at once and return a summary report."""
-        return {
+        report = {
             "loops": self.detect_loops(agent_id),
             "silent_failures": self.detect_silent_failures(agent_id),
             "redundant_calls": self.detect_redundant_calls(agent_id),
             "estimated_cost_leak": self.estimate_cost_leak(agent_id),
         }
+
+        # Fire alerts via the sink (SNS in production, no-op locally)
+        if self.alert_sink:
+            if report["loops"]:
+                self.alert_sink.send_alert(agent_id, "loop_detected", {
+                    "cycles": report["loops"],
+                })
+            if report["silent_failures"]:
+                self.alert_sink.send_alert(agent_id, "silent_failure", {
+                    "step_ids": [s.step_id for s in report["silent_failures"]],
+                })
+            if report["redundant_calls"]:
+                self.alert_sink.send_alert(agent_id, "redundant_calls", {
+                    "pairs": [(a.step_id, b.step_id) for a, b in report["redundant_calls"]],
+                })
+            if report["estimated_cost_leak"] > 0:
+                self.alert_sink.send_alert(agent_id, "cost_leak", {
+                    "estimated_cost": report["estimated_cost_leak"],
+                })
+
+        return report

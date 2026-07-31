@@ -4,11 +4,14 @@ requests
 python-dotenv
 groq
 sentence-transformers
-torch
 networkx>=3.0
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
-sqlalchemy>=2.0.0
 pytest>=7.0.0
 pytest-asyncio>=0.21.0
 httpx>=0.24.0
+numpy<2.0.0
+# --- AWS deployment ---
+boto3
+mangum
+python-json-logger
