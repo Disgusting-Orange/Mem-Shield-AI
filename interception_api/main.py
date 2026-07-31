@@ -60,7 +60,7 @@ def _build_components():
     return fw, gd
 
 
-app = FastAPI(title="Mem-Shield-AI Interception API & Vault")
+app = FastAPI(title="Mem-Shield-AI Interception API & ChatGPT Vault")
 firewall, guardian = _build_components()
 
 # -------------------------------------------------------------
@@ -83,7 +83,7 @@ class AgentStepRequest(BaseModel):
 
 class PersonalMemoryUploadRequest(BaseModel):
     user_id: str = "user_default"
-    category: str = "medical"  # "medical" | "preference" | "note" | "financial"
+    category: str = "medical"
     title: str
     content: str
 
@@ -103,7 +103,7 @@ class UnlockChatRequest(BaseModel):
 
 class AddChatMessageRequest(BaseModel):
     chat_id: str
-    sender: str
+    sender: str = "user"
     text: str
     password: Optional[str] = None
 
@@ -159,21 +159,6 @@ def post_step(req: AgentStepRequest):
     guardian.record_step(step)
     audit_report = guardian.audit(req.agent_id)
 
-    if audit_report["loops"]:
-        log.warning("Loop detected for agent=%s - cycles: %s", req.agent_id, audit_report["loops"])
-    if audit_report["silent_failures"]:
-        log.warning(
-            "Silent failures for agent=%s - steps: %s",
-            req.agent_id,
-            [s.step_id for s in audit_report["silent_failures"]],
-        )
-    if audit_report["redundant_calls"]:
-        log.warning(
-            "Redundant calls for agent=%s - pairs: %s",
-            req.agent_id,
-            [(a.step_id, b.step_id) for a, b in audit_report["redundant_calls"]],
-        )
-
     return {
         "loops": audit_report["loops"],
         "silent_failures": [asdict(s) for s in audit_report["silent_failures"]],
@@ -182,19 +167,14 @@ def post_step(req: AgentStepRequest):
     }
 
 # -------------------------------------------------------------
-# Personal & Medical Record Vault Endpoints (Firewall Protected)
+# Personal & Medical Record Vault Endpoints
 # -------------------------------------------------------------
 @app.post("/vault/personal/write")
 def upload_personal_memory(req: PersonalMemoryUploadRequest):
-    """Upload a medical or personal document. Passes through Memory Firewall first."""
     eval_key = f"{req.category}:{req.title}"
     eval_result = firewall.validate_write(req.user_id, eval_key, req.content)
 
     if not eval_result.accepted:
-        log.warning(
-            "Personal document rejected by firewall – user=%s category=%s title=%s score=%d",
-            req.user_id, req.category, req.title, eval_result.score
-        )
         raise HTTPException(
             status_code=400,
             detail={
@@ -223,7 +203,7 @@ def list_personal_memories(user_id: str = "user_default", category: Optional[str
     return {"user_id": user_id, "memories": memories}
 
 # -------------------------------------------------------------
-# Private Locked Chats & Vault Endpoints (Isolated DB)
+# ChatGPT-Style Vault & Auto-Classification Endpoints
 # -------------------------------------------------------------
 @app.post("/vault/chat/create")
 def create_chat(req: CreateChatRequest):
@@ -267,22 +247,65 @@ def unlock_chat(req: UnlockChatRequest):
 
 @app.post("/vault/chat/message")
 def add_chat_message(req: AddChatMessageRequest):
-    # Verify access first if chat is locked
+    """ChatGPT-style message handler with automatic AI medical classification & auto-vaulting."""
+    # 1. Verify access if chat is password locked
     if req.password:
         success, _, msg = vault_db.unlock_chat(req.chat_id, req.password)
         if not success:
             raise HTTPException(status_code=401, detail={"message": "Authentication failed: " + msg})
 
-    # Intercept text message with firewall
+    # 2. Intercept message with Memory Firewall
     eval_result = firewall.validate_write("chat_user", req.chat_id, req.text)
     if not eval_result.accepted:
-        raise HTTPException(status_code=400, detail={"accepted": False, "message": "Message blocked by firewall: " + "; ".join(eval_result.reasons)})
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "accepted": False,
+                "score": eval_result.score,
+                "message": "Message blocked by Memory Firewall: " + "; ".join(eval_result.reasons)
+            }
+        )
 
-    added = vault_db.add_message(req.chat_id, req.sender, req.text)
-    if not added:
-        raise HTTPException(status_code=404, detail="Chat session not found")
+    # 3. Run Automatic Medical Content Classifier
+    classification = firewall.classify_content(req.text)
+    auto_vaulted = False
 
-    return {"chat_id": req.chat_id, "added": True}
+    # 4. Auto-Vault if medical data detected
+    if classification["is_medical"]:
+        mem_id = f"auto-mem-{uuid.uuid4().hex[:8]}"
+        title_summary = req.text[:40] + ("..." if len(req.text) > 40 else "")
+        personal_db.save_memory(
+            memory_id=mem_id,
+            user_id="user_default",
+            category="medical",
+            title=f"Auto-Vaulted Medical: {title_summary}",
+            content=req.text,
+            threat_score=eval_result.score,
+            reasons=eval_result.reasons,
+        )
+        auto_vaulted = True
+        log.info("Auto-vaulted medical record for chat=%s", req.chat_id)
+
+    # 5. Append User Message
+    vault_db.add_message(req.chat_id, "user", req.text)
+
+    # 6. Generate AI Response
+    if classification["is_medical"]:
+        ai_reply = f"🏥 **Medical Record Auto-Detected & Secured in Vault**\n\nI have automatically classified your medical entry and saved it to your encrypted Medical Vault (Score: {eval_result.score}/100).\n\nRegarding your medical query: Always consult a licensed physician for clinical diagnosis. How else can I assist with your health records?"
+    else:
+        ai_reply = f"🛡️ **Verified Safe by Memory Firewall** (Score: {eval_result.score}/100)\n\nI've verified your message contains no security threats or prompt overrides. How can I help you next?"
+
+    # Append Assistant Message
+    vault_db.add_message(req.chat_id, "assistant", ai_reply)
+
+    return {
+        "chat_id": req.chat_id,
+        "is_medical": classification["is_medical"],
+        "auto_vaulted": auto_vaulted,
+        "threat_score": eval_result.score,
+        "user_text": req.text,
+        "ai_reply": ai_reply,
+    }
 
 @app.post("/vault/chat/reset-password")
 def reset_chat_password(req: ResetPasswordRequest):

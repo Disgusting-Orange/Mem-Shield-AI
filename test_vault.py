@@ -2,11 +2,12 @@
 test_vault.py
 --------------
 Automated test suite verifying:
-1. Medical and personal record upload, firewall interception, and retrieval.
-2. Isolated database creation in `private_vault.db`.
-3. Private chat locking with PBKDF2 password hashing & salt generation.
-4. Correct password decryption & wrong password rejection.
-5. Emergency Recovery Key generation & password reset functionality.
+1. Automatic AI Medical classification & auto-vaulting heuristics.
+2. Medical and personal record upload, firewall interception, and retrieval.
+3. Isolated database creation in `private_vault.db`.
+4. Private chat locking with PBKDF2 password hashing & salt generation.
+5. Correct password decryption & wrong password rejection.
+6. Emergency Recovery Key generation & password reset functionality.
 """
 
 import os
@@ -17,6 +18,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from vault_store import VaultStore
 from personal_memory_store import PersonalMemoryStore
+from memory_firewall.firewall import MemoryFirewall
 from crypto_utils import generate_salt, hash_password, verify_password, generate_recovery_key, verify_recovery_key
 
 
@@ -27,6 +29,7 @@ class TestVaultAndMemory(unittest.TestCase):
         self.test_personal_db = "test_personal_memory.db"
         self.vault = VaultStore(self.test_vault_db)
         self.personal_store = PersonalMemoryStore(self.test_personal_db)
+        self.firewall = MemoryFirewall()
 
     def tearDown(self):
         self.vault.conn.close()
@@ -35,6 +38,17 @@ class TestVaultAndMemory(unittest.TestCase):
             os.remove(self.test_vault_db)
         if os.path.exists(self.test_personal_db):
             os.remove(self.test_personal_db)
+
+    def test_automatic_medical_classifier(self):
+        medical_text = "Patient reports high fever of 101F, blood test shows elevated WBC, prescribed Paracetamol 500mg."
+        res = self.firewall.classify_content(medical_text)
+        self.assertTrue(res["is_medical"])
+        self.assertEqual(res["category"], "medical")
+
+        general_text = "What is the capital of France and what are the best tourist places to visit?"
+        res2 = self.firewall.classify_content(general_text)
+        self.assertFalse(res2["is_medical"])
+        self.assertEqual(res2["category"], "general")
 
     def test_crypto_hashing_and_verification(self):
         salt = generate_salt()
@@ -47,7 +61,7 @@ class TestVaultAndMemory(unittest.TestCase):
     def test_recovery_key_format_and_verification(self):
         rec_key = generate_recovery_key()
         self.assertTrue(rec_key.startswith("MEM-"))
-        self.assertEqual(len(rec_key), 18)  # MEM-XXXX-XXXX-XXXX = 18 chars
+        self.assertEqual(len(rec_key), 18)
 
         from crypto_utils import hash_recovery_key
         key_hash = hash_recovery_key(rec_key)
@@ -70,12 +84,10 @@ class TestVaultAndMemory(unittest.TestCase):
         self.assertTrue(summary["is_locked"])
         self.assertIsNotNone(recovery_key)
 
-        # Attempt unlock with wrong password -> fail
         success, msgs, msg = self.vault.unlock_chat(chat_id, "WrongPassword")
         self.assertFalse(success)
         self.assertIsNone(msgs)
 
-        # Attempt unlock with correct password -> success
         success, msgs, msg = self.vault.unlock_chat(chat_id, pwd)
         self.assertTrue(success)
         self.assertEqual(len(msgs), 1)
@@ -92,19 +104,15 @@ class TestVaultAndMemory(unittest.TestCase):
             password=pwd
         )
 
-        # Attempt reset with wrong recovery key -> fail
         reset_ok, msg = self.vault.reset_password(chat_id, "MEM-9999-9999-9999", "NewPassword")
         self.assertFalse(reset_ok)
 
-        # Attempt reset with correct recovery key -> success
         reset_ok, msg = self.vault.reset_password(chat_id, recovery_key, "NewPassword123!")
         self.assertTrue(reset_ok)
 
-        # Unlock with old password -> fail
         success, _, _ = self.vault.unlock_chat(chat_id, pwd)
         self.assertFalse(success)
 
-        # Unlock with new password -> success
         success, msgs, _ = self.vault.unlock_chat(chat_id, "NewPassword123!")
         self.assertTrue(success)
 

@@ -2,7 +2,7 @@ import os
 import json
 import logging
 import numpy as np
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 
 import requests
 
@@ -14,6 +14,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from interfaces import BaseHistoryStore
 
 logger = logging.getLogger(__name__)
+
+# Medical keywords & terms for fast local heuristic detection
+MEDICAL_KEYWORDS = [
+    "blood test", "symptom", "fever", "doctor", "prescription", "diagnosis",
+    "patient", "hospital", "dosage", "clinic", "mg", "ml", "bp", "pulse",
+    "hemoglobin", "cholesterol", "allergy", "infection", "treatment", "pain",
+    "medicine", "tablet", "capsule", "disease", "vaccine", "ct scan", "mri",
+    "x-ray", "lab report", "clinical", "physician", "heart rate", "glucose"
+]
 
 
 # ---------------------------------------------------------------------------
@@ -92,16 +101,7 @@ class InMemoryHistoryStore(BaseHistoryStore):
 class MemoryFirewall:
     """Zero-Trust firewall that validates a memory write before it is persisted.
 
-    The firewall combines two independent signals:
-    1. **LLM trust scoring** – a lightweight Groq LLM call evaluates how "trustworthy"
-       the candidate write looks (e.g., does it contain malicious instructions?).
-    2. **Semantic drift detection** – the write is embedded with
-       ``all-MiniLM-L6-v2`` and compared to the agent's
-       historical writes. Large semantic distance may indicate a poisoning attempt.
-
-    Both signals are normalised to a 0-100 range and blended (60 % LLM, 40 % semantic).
-    If the combined score falls below :data:`MEMORY_TRUST_THRESHOLD` the write is
-    rejected and a :class:`TrustScoreResult` with ``accepted=False`` is returned.
+    Also provides automatic AI medical & personal health classification.
     """
 
     def __init__(self, history_store: Optional[BaseHistoryStore] = None) -> None:
@@ -109,53 +109,46 @@ class MemoryFirewall:
         # Load embedding model once (ONNX on Lambda, torch locally)
         self._embedder = _load_embedder()
 
-    # ---------------------------------------------------------------------
-    # Public API
-    # ---------------------------------------------------------------------
+    def classify_content(self, text: str) -> Dict[str, Any]:
+        """Automatically classify whether text is medical/personal health data."""
+        text_lower = text.lower()
+        matched_terms = [term for term in MEDICAL_KEYWORDS if term in text_lower]
+
+        is_medical = len(matched_terms) > 0
+
+        # Optional Groq LLM validation for edge cases
+        reason = f"Matched medical terms: {', '.join(matched_terms[:3])}" if is_medical else "General conversation context"
+
+        return {
+            "is_medical": is_medical,
+            "category": "medical" if is_medical else "general",
+            "matched_terms": matched_terms,
+            "reason": reason
+        }
+
     def validate_write(self, agent_id: str, key: str, value: str) -> TrustScoreResult:
         """Validate a proposed memory write.
 
-        Parameters
-        ----------
-        agent_id: str
-            Identifier of the agent performing the write.
-        key: str
-            Memory key (e.g., ``"user_preferences"``).
-        value: str
-            JSON-serialisable payload that will be stored.
-
-        Returns
-        -------
-        TrustScoreResult
-            Contains the combined score, the list of reasons, and a boolean flag
-            indicating whether the write is accepted.
+        Returns TrustScoreResult with score (0-100), reasons, and accepted flag.
         """
-        # -----------------------------------------------------------------
         # 1️⃣ LLM based trust scoring via Groq
-        # -----------------------------------------------------------------
         try:
             groq_score, groq_reason = self._score_with_groq(key, value)
         except Exception as exc:
-            # If the LLM call fails we fall back to a safe low score but continue.
             logger.warning("Groq scoring failed: %s. Falling back to score 30.", exc)
             groq_score = 30
             groq_reason = f"Groq call error: {exc}"
 
-        # -----------------------------------------------------------------
         # 2️⃣ Semantic similarity / drift check
-        # -----------------------------------------------------------------
         semantic_score, semantic_reason = self._semantic_drift_score(agent_id, value)
 
-        # -----------------------------------------------------------------
-        # 3️⃣ Combine scores (weights can be tuned via env if needed)
-        # -----------------------------------------------------------------
+        # 3️⃣ Combine scores
         combined = int(groq_score * 0.6 + semantic_score * 0.4)
         accepted = combined >= MEMORY_TRUST_THRESHOLD
 
         reasons: List[str] = [groq_reason, semantic_reason]
         result = TrustScoreResult(score=combined, reasons=reasons, accepted=accepted)
 
-        # Record the write if it is accepted – it becomes part of the drift history.
         if accepted:
             self._history_store.append_write(agent_id, key, value)
         else:
@@ -169,14 +162,8 @@ class MemoryFirewall:
 
         return result
 
-    # ---------------------------------------------------------------------
-    # Internal helpers
-    # ---------------------------------------------------------------------
     def _score_with_groq(self, key: str, value: str) -> Tuple[int, str]:
-        """Call Groq LLM to obtain a trust score (0-100).
-
-        The prompt asks the model to output a plain integer and a short rationale.
-        """
+        """Call Groq LLM to obtain a trust score (0-100)."""
         if not GROQ_API_KEY:
             raise RuntimeError("GROQ_API_KEY not set in environment")
 
@@ -203,29 +190,22 @@ class MemoryFirewall:
         resp.raise_for_status()
         data = resp.json()
         content = data["choices"][0]["message"]["content"].strip()
-        # Expected "<score> - <reason>"
+
         try:
             score_part, reason_part = content.split("-", 1)
             score = int(score_part.strip())
             reason = reason_part.strip()
         except Exception:
-            # Fallback parsing – extract first integer we find.
             import re
-
             match = re.search(r"(\d{1,3})", content)
             score = int(match.group(1)) if match else 0
             reason = content
-        # Clamp score to 0-100
+
         score = max(0, min(100, score))
         return score, reason
 
     def _semantic_drift_score(self, agent_id: str, new_value: str) -> Tuple[int, str]:
-        """Compute similarity of ``new_value`` to the agent's previous writes.
-
-        Returns a score 0-100 where 100 means *very similar* to past memory.
-        If there is no history, we assume maximum similarity (100).
-        """
-        # If no embedding backend is available, skip drift detection
+        """Compute similarity of ``new_value`` to the agent's previous writes."""
         if self._embedder[0] == "none":
             return 100, "Semantic drift detection unavailable (no embedding backend)"
 
@@ -233,17 +213,13 @@ class MemoryFirewall:
         if not history:
             return 100, "No prior writes – assuming safe"
 
-        # Embed the new value.
         new_emb = _embed(self._embedder, [new_value])
-        # Embed all historic values.
         past_vals = [entry["value"] for entry in history]
         past_emb = _embed(self._embedder, past_vals)
 
-        # Compute cosine similarity with each past entry, take the maximum.
         sims = _cosine_similarity(new_emb, past_emb)
-        max_sim = float(sims.max())  # between -1 and 1 (should be >=0 for our model)
+        max_sim = float(sims.max())
 
-        # Normalise to 0-100.
         score = int(max(0.0, min(1.0, max_sim)) * 100)
         reason = f"Semantic similarity to prior writes: {score}%"
         return score, reason

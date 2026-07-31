@@ -1,184 +1,168 @@
 /**
- * Mem-Shield-AI — Frontend Application Logic
+ * Mem-Shield-AI — ChatGPT Interface & Auto-Medical Classifier Logic
  */
 
 document.addEventListener("DOMContentLoaded", () => {
-    // Current State
+    // Application State
     const state = {
         userId: "user_default",
-        activeTab: "tab-dashboard",
-        memories: [],
         chats: [],
         activeChat: null,
-        activeChatUnlockedMessages: null,
-        auditLogs: [],
+        activeMessages: [],
+        medicalMemories: [],
     };
 
     // DOM Elements
     const elements = {
-        navButtons: document.querySelectorAll(".nav-menu .nav-item"),
-        tabPages: document.querySelectorAll(".tab-page"),
-        pageTitle: document.getElementById("page-title"),
-        pageDesc: document.getElementById("page-desc"),
-        btnRefresh: document.getElementById("btn-refresh-data"),
-        
-        // Dashboard
-        metricLoops: document.getElementById("metric-loops"),
-        metricFailures: document.getElementById("metric-failures"),
-        metricCost: document.getElementById("metric-cost"),
-        dashboardAuditFeed: document.getElementById("dashboard-audit-feed"),
-        statMemoriesCount: document.getElementById("stat-memories-count"),
-        statChatsCount: document.getElementById("stat-chats-count"),
+        btnNewChat: document.getElementById("btn-new-chat"),
+        chatHistoryList: document.getElementById("chat-history-list"),
+        btnToggleMedicalDrawer: document.getElementById("btn-toggle-medical-drawer"),
+        medicalVaultBadgeCount: document.getElementById("medical-vault-badge-count"),
+        medicalDrawer: document.getElementById("medical-drawer"),
+        btnCloseMedicalDrawer: document.getElementById("btn-close-medical-drawer"),
+        drawerMedicalList: document.getElementById("drawer-medical-list"),
 
-        // Personal Memories
-        formUploadMemory: document.getElementById("form-upload-memory"),
-        personalMemoryList: document.getElementById("personal-memory-list"),
-        memoryFilters: document.querySelectorAll("#memory-category-filters .pill"),
+        // Canvas & Header
+        currentChatTitle: document.getElementById("current-chat-title"),
+        currentChatStatus: document.getElementById("current-chat-status"),
+        btnLockChatHeader: document.getElementById("btn-lock-chat-header"),
+        messagesContainer: document.getElementById("messages-container"),
+        welcomeScreen: document.getElementById("welcome-screen"),
+        streamList: document.getElementById("stream-list"),
+        promptCards: document.querySelectorAll(".prompt-card"),
 
-        // Private Chats
-        chatSessionsList: document.getElementById("chat-sessions-list"),
-        btnOpenCreateChat: document.getElementById("btn-open-create-chat"),
-        chatViewPlaceholder: document.getElementById("chat-view-placeholder"),
-        chatActiveBox: document.getElementById("chat-active-box"),
-        activeChatTitle: document.getElementById("active-chat-title"),
-        activeChatStatus: document.getElementById("active-chat-status"),
-        btnLockCurrentChat: document.getElementById("btn-lock-current-chat"),
-        chatMessagesScroll: document.getElementById("chat-messages-scroll"),
-        formSendMessage: document.getElementById("form-send-message"),
-        inputChatMessage: document.getElementById("input-chat-message"),
+        // Input
+        formChatInput: document.getElementById("form-chat-input"),
+        inputChatText: document.getElementById("input-chat-text"),
+        btnUploadFile: document.getElementById("btn-upload-file"),
 
         // Modals
-        modalCreateChat: document.getElementById("modal-create-chat"),
-        formCreateChat: document.getElementById("form-create-chat"),
         modalUnlockChat: document.getElementById("modal-unlock-chat"),
         formUnlockChat: document.getElementById("form-unlock-chat"),
-        unlockPasswordInput: document.getElementById("unlock-password-input"),
         unlockChatId: document.getElementById("unlock-chat-id"),
+        unlockPasswordInput: document.getElementById("unlock-password-input"),
         btnForgotPassword: document.getElementById("btn-forgot-password"),
+
         modalRecoveryDisplay: document.getElementById("modal-recovery-display"),
         displayRecoveryKey: document.getElementById("display-recovery-key"),
+
         modalResetPassword: document.getElementById("modal-reset-password"),
         formResetPassword: document.getElementById("form-reset-password"),
         resetChatId: document.getElementById("reset-chat-id"),
-
-        // Sandbox Forms
-        formSandboxFirewall: document.getElementById("form-sandbox-firewall"),
-        sbFwResult: document.getElementById("sb-fw-result"),
-        formSandboxGuardian: document.getElementById("form-sandbox-guardian"),
-        sbGdResult: document.getElementById("sb-gd-result"),
-    };
-
-    // Tab Navigation Configuration
-    const tabHeaders = {
-        "tab-dashboard": { title: "Security Dashboard", desc: "Real-time threat monitoring, graph loops, and agent inspection" },
-        "tab-medical": { title: "Medical & Personal Memory Vault", desc: "Firewall-inspected safe storage for clinical notes & user context" },
-        "tab-chats": { title: "Private Locked Chats", desc: "PBKDF2 encrypted chat threads backed by isolated private_vault.db" },
-        "tab-sandbox": { title: "Firewall Security Sandbox", desc: "Test prompt injections, memory poisoning, and reasoning loops" },
     };
 
     function init() {
         setupEventListeners();
-        loadAllData();
+        loadChats();
+        loadMedicalMemories();
     }
 
     function setupEventListeners() {
-        // Navigation Tabs
-        elements.navButtons.forEach(btn => {
-            btn.addEventListener("click", () => {
-                const targetTab = btn.getAttribute("data-tab");
-                switchTab(targetTab);
+        // New Chat Button
+        elements.btnNewChat.addEventListener("click", () => createNewChat());
+
+        // Starter Prompts
+        elements.promptCards.forEach(card => {
+            card.addEventListener("click", () => {
+                const promptText = card.getAttribute("data-prompt");
+                if (promptText) {
+                    elements.inputChatText.value = promptText;
+                    elements.formChatInput.dispatchEvent(new Event("submit"));
+                }
             });
         });
 
-        // Refresh Button
-        elements.btnRefresh.addEventListener("click", () => loadAllData());
-
-        // Category Filter Pills
-        elements.memoryFilters.forEach(pill => {
-            pill.addEventListener("click", () => {
-                elements.memoryFilters.forEach(p => p.classList.remove("active"));
-                pill.classList.add("active");
-                const filter = pill.getAttribute("data-filter");
-                renderPersonalMemories(filter);
-            });
+        // Medical Drawer Toggle
+        elements.btnToggleMedicalDrawer.addEventListener("click", () => {
+            elements.medicalDrawer.classList.remove("hidden");
+            loadMedicalMemories();
+        });
+        elements.btnCloseMedicalDrawer.addEventListener("click", () => {
+            elements.medicalDrawer.classList.add("hidden");
         });
 
-        // Upload Personal Memory Form
-        elements.formUploadMemory.addEventListener("submit", async (e) => {
+        // Upload Attachment Button
+        elements.btnUploadFile.addEventListener("click", () => {
+            const doc = prompt("Enter medical record details or test results to upload & firewall:");
+            if (doc) {
+                elements.inputChatText.value = doc;
+                elements.formChatInput.dispatchEvent(new Event("submit"));
+            }
+        });
+
+        // Send Message Handler
+        elements.formChatInput.addEventListener("submit", async (e) => {
             e.preventDefault();
-            const category = document.getElementById("mem-category").value;
-            const title = document.getElementById("mem-title").value;
-            const content = document.getElementById("mem-content").value;
+            const text = elements.inputChatText.value.trim();
+            if (!text) return;
 
-            const btnSave = document.getElementById("btn-save-memory");
-            btnSave.disabled = true;
-            btnSave.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Scanning with Firewall...`;
+            // Ensure active chat session exists
+            if (!state.activeChat) {
+                await createNewChat("Chat " + new Date().toLocaleTimeString());
+            }
+
+            elements.inputChatText.value = "";
+            elements.welcomeScreen.classList.add("hidden");
+            elements.streamList.classList.remove("hidden");
+
+            // Optimistically add user bubble
+            addMessageRow("user", text);
 
             try {
-                const res = await fetch("/vault/personal/write", {
+                const res = await fetch("/vault/chat/message", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        user_id: state.userId,
-                        category: category,
-                        title: title,
-                        content: content
+                        chat_id: state.activeChat.chat_id,
+                        sender: "user",
+                        text: text
                     })
                 });
 
                 const data = await res.json();
                 if (!res.ok) {
-                    alert(`❌ REJECTED BY FIREWALL (Score: ${data.detail.score}/100)\n\nReasons:\n${data.detail.reasons.join('\n')}`);
-                    addAuditLog(`Memory write REJECTED for '${title}'`, "danger", data.detail.score);
+                    addMessageRow("ai", `🚨 **Blocked by Memory Firewall**\n\n${data.detail.message}`, "threat");
                 } else {
-                    alert(`✅ ACCEPTED BY FIREWALL (Score: ${data.memory.threat_score}/100)\nRecord saved safely to vault!`);
-                    addAuditLog(`Memory write ACCEPTED for '${title}'`, "success", data.memory.threat_score);
-                    elements.formUploadMemory.reset();
-                    loadPersonalMemories();
+                    const badgeType = data.is_medical ? "medical" : "safe";
+                    addMessageRow("ai", data.ai_reply, badgeType);
+
+                    if (data.auto_vaulted) {
+                        loadMedicalMemories();
+                    }
                 }
             } catch (err) {
-                alert("Error connecting to server.");
-            } finally {
-                btnSave.disabled = false;
-                btnSave.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> Scan & Save to Safe Vault`;
+                addMessageRow("ai", "❌ Connection error reaching security proxy.", "threat");
             }
         });
 
-        // Create Chat Modal
-        elements.btnOpenCreateChat.addEventListener("click", () => openModal("modalCreateChat"));
-        
-        elements.formCreateChat.addEventListener("submit", async (e) => {
-            e.preventDefault();
-            const title = document.getElementById("create-chat-title").value;
-            const password = document.getElementById("create-chat-pwd").value || null;
+        // Lock Chat Header Button
+        elements.btnLockChatHeader.addEventListener("click", async () => {
+            if (!state.activeChat) {
+                alert("Please start a conversation session first!");
+                return;
+            }
+            const pwd = prompt("Set a passcode to lock this chat session:");
+            if (!pwd) return;
 
             try {
-                const res = await fetch("/vault/chat/create", {
+                const res = await fetch("/vault/chat/lock", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        user_id: state.userId,
-                        title: title,
-                        password: password
-                    })
+                    body: JSON.stringify({ chat_id: state.activeChat.chat_id, password: pwd })
                 });
 
                 const data = await res.json();
-                closeModal("modalCreateChat");
-                elements.formCreateChat.reset();
-
                 if (data.recovery_key) {
                     elements.displayRecoveryKey.textContent = data.recovery_key;
                     openModal("modalRecoveryDisplay");
                 }
-
                 loadChats();
             } catch (err) {
-                alert("Error creating chat session.");
+                alert("Error locking chat session.");
             }
         });
 
-        // Unlock Chat Form (PIN Pad Modal)
+        // Unlock Chat Form (PIN Modal)
         elements.formUnlockChat.addEventListener("submit", async (e) => {
             e.preventDefault();
             const chatId = elements.unlockChatId.value;
@@ -193,18 +177,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 const data = await res.json();
                 if (!res.ok) {
-                    alert(`❌ Unlock Failed: ${data.detail.message || "Invalid password"}`);
+                    alert(`❌ ${data.detail.message || "Incorrect Passcode"}`);
                 } else {
                     closeModal("modalUnlockChat");
-                    state.activeChatUnlockedMessages = data.messages;
-                    renderActiveChat(chatId, true);
+                    state.activeMessages = data.messages || [];
+                    renderActiveChatSession(chatId);
                 }
             } catch (err) {
                 alert("Error unlocking chat.");
             }
         });
 
-        // Forgot Password Button inside Unlock Modal
+        // Forgot Password Button
         elements.btnForgotPassword.addEventListener("click", () => {
             const chatId = elements.unlockChatId.value;
             closeModal("modalUnlockChat");
@@ -234,191 +218,39 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (!res.ok) {
                     alert(`❌ Reset Failed: ${data.detail.message}`);
                 } else {
-                    alert("🎉 Password Reset Successful! You can now unlock your chat with your new password.");
+                    alert("🎉 Passcode Reset Successful! You can now unlock your chat.");
                     closeModal("modalResetPassword");
                     elements.formResetPassword.reset();
                 }
             } catch (err) {
-                alert("Error resetting password.");
+                alert("Error resetting passcode.");
             }
         });
 
-        // Lock Current Chat Button
-        elements.btnLockCurrentChat.addEventListener("click", async () => {
-            if (!state.activeChat) return;
-            const pwd = prompt("Enter a password to lock this chat session:");
-            if (!pwd) return;
-
-            try {
-                const res = await fetch("/vault/chat/lock", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ chat_id: state.activeChat.chat_id, password: pwd })
-                });
-
-                const data = await res.json();
-                if (data.recovery_key) {
-                    elements.displayRecoveryKey.textContent = data.recovery_key;
-                    openModal("modalRecoveryDisplay");
-                }
-                loadChats();
-                state.activeChat = null;
-                elements.chatActiveBox.classList.add("hidden");
-                elements.chatViewPlaceholder.classList.remove("hidden");
-            } catch (err) {
-                alert("Error locking chat.");
-            }
-        });
-
-        // Send Message Form
-        elements.formSendMessage.addEventListener("submit", async (e) => {
-            e.preventDefault();
-            if (!state.activeChat) return;
-
-            const text = elements.inputChatMessage.value;
-            elements.inputChatMessage.value = "";
-
-            try {
-                const res = await fetch("/vault/chat/message", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        chat_id: state.activeChat.chat_id,
-                        sender: "user",
-                        text: text
-                    })
-                });
-
-                const data = await res.json();
-                if (!res.ok) {
-                    alert(`⚠️ ${data.detail.message}`);
-                } else {
-                    // Update active view
-                    state.activeChatUnlockedMessages.push({ sender: "user", text: text, timestamp: Date.now()/1000 });
-                    renderChatMessages(state.activeChatUnlockedMessages);
-                }
-            } catch (err) {
-                alert("Failed to send message.");
-            }
-        });
-
-        // Close Modal Handlers
+        // Close Modals
         document.querySelectorAll(".btn-close-modal").forEach(btn => {
             btn.addEventListener("click", () => {
                 document.querySelectorAll(".modal-overlay").forEach(m => m.classList.add("hidden"));
             });
         });
-
-        // Sandbox Forms
-        elements.formSandboxFirewall.addEventListener("submit", async (e) => {
-            e.preventDefault();
-            const key = document.getElementById("sb-fw-key").value;
-            const val = document.getElementById("sb-fw-val").value;
-
-            try {
-                const res = await fetch("/memory/write", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ agent_id: "sandbox-agent", key: key, value: val })
-                });
-
-                const data = await res.json();
-                elements.sbFwResult.classList.remove("hidden");
-                if (res.ok) {
-                    elements.sbFwResult.innerHTML = `<div class="security-banner" style="border-color: var(--emerald)"><i class="fa-solid fa-circle-check text-emerald"></i><div><strong>ACCEPTED (Score: ${data.score}/100)</strong><p>${data.reasons.join('; ')}</p></div></div>`;
-                } else {
-                    elements.sbFwResult.innerHTML = `<div class="security-banner" style="border-color: var(--rose)"><i class="fa-solid fa-triangle-exclamation text-rose"></i><div><strong>REJECTED (Score: ${data.detail.score}/100)</strong><p>${data.detail.reasons.join('; ')}</p></div></div>`;
-                }
-            } catch (err) {
-                alert("Sandbox evaluation error.");
-            }
-        });
-
-        elements.formSandboxGuardian.addEventListener("submit", async (e) => {
-            e.preventDefault();
-            const action = document.getElementById("sb-gd-action").value;
-            const payload = document.getElementById("sb-gd-payload").value;
-
-            try {
-                const res = await fetch("/agent/step", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        agent_id: "sandbox-agent",
-                        step_id: `step-${Date.now().toString().slice(-4)}`,
-                        action: action,
-                        status: "success",
-                        result_payload: payload,
-                        cost_estimate: 0.001
-                    })
-                });
-
-                const data = await res.json();
-                elements.sbGdResult.classList.remove("hidden");
-                elements.sbGdResult.innerHTML = `<pre style="background: rgba(0,0,0,0.6); padding: 12px; border-radius: 8px; font-size: 12px; color: var(--sky);">${JSON.stringify(data, null, 2)}</pre>`;
-                
-                // Update metrics
-                if (data.loops.length) elements.metricLoops.textContent = `${data.loops.length} Cycles`;
-                if (data.silent_failures.length) elements.metricFailures.textContent = `${data.silent_failures.length} Flagged`;
-                if (data.estimated_cost_leak) elements.metricCost.textContent = `$${data.estimated_cost_leak.toFixed(4)}`;
-            } catch (err) {
-                alert("Guardian step error.");
-            }
-        });
     }
 
-    function switchTab(tabId) {
-        state.activeTab = tabId;
-        elements.navButtons.forEach(btn => {
-            btn.classList.toggle("active", btn.getAttribute("data-tab") === tabId);
-        });
-        elements.tabPages.forEach(page => {
-            page.classList.toggle("active", page.id === tabId);
-        });
-
-        if (tabHeaders[tabId]) {
-            elements.pageTitle.textContent = tabHeaders[tabId].title;
-            elements.pageDesc.textContent = tabHeaders[tabId].desc;
-        }
-    }
-
-    async function loadAllData() {
-        await Promise.all([loadPersonalMemories(), loadChats()]);
-    }
-
-    async function loadPersonalMemories() {
+    async function createNewChat(customTitle) {
+        const title = customTitle || "Chat " + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         try {
-            const res = await fetch(`/vault/personal/list?user_id=${state.userId}`);
+            const res = await fetch("/vault/chat/create", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ user_id: state.userId, title: title })
+            });
+
             const data = await res.json();
-            state.memories = data.memories || [];
-            renderPersonalMemories("all");
-            elements.statMemoriesCount.textContent = `${state.memories.length} Stored Records`;
+            await loadChats();
+            const newChat = state.chats.find(c => c.chat_id === data.chat.chat_id);
+            if (newChat) selectChatSession(newChat);
         } catch (err) {
-            console.error("Error loading memories:", err);
+            console.error("Error creating chat", err);
         }
-    }
-
-    function renderPersonalMemories(filter) {
-        const list = elements.personalMemoryList;
-        const filtered = filter === "all" ? state.memories : state.memories.filter(m => m.category === filter);
-
-        if (!filtered.length) {
-            list.innerHTML = `<div class="empty-state"><i class="fa-solid fa-box-open"></i><p>No records found in category '${filter}'.</p></div>`;
-            return;
-        }
-
-        list.innerHTML = filtered.map(m => `
-            <div class="memory-item-card">
-                <div class="memory-item-header">
-                    <h4>${escapeHtml(m.title)}</h4>
-                    <span class="badge badge-success"><i class="fa-solid fa-shield"></i> Score ${m.threat_score}</span>
-                </div>
-                <div class="memory-item-body">
-                    <p>${escapeHtml(m.content)}</p>
-                    <span style="font-size: 11px; color: var(--text-dim); margin-top: 6px; display: block;">Category: ${m.category.toUpperCase()} • ${new Date(m.created_at * 1000).toLocaleTimeString()}</span>
-                </div>
-            </div>
-        `).join("");
     }
 
     async function loadChats() {
@@ -426,55 +258,51 @@ document.addEventListener("DOMContentLoaded", () => {
             const res = await fetch(`/vault/chat/all?user_id=${state.userId}`);
             const data = await res.json();
             state.chats = data.chats || [];
-            renderChatsList();
-            elements.statChatsCount.textContent = `${state.chats.filter(c => c.is_locked).length} Locked Chats`;
+            renderSidebarChats();
         } catch (err) {
-            console.error("Error loading chats:", err);
+            console.error("Error loading chat sessions", err);
         }
     }
 
-    function renderChatsList() {
-        const list = elements.chatSessionsList;
+    function renderSidebarChats() {
+        const list = elements.chatHistoryList;
         if (!state.chats.length) {
-            list.innerHTML = `<div class="empty-state"><i class="fa-solid fa-comments"></i><p>No chat sessions found.</p></div>`;
+            list.innerHTML = `<div style="font-size: 12px; color: var(--text-muted); padding: 8px;">No chat history yet.</div>`;
             return;
         }
 
         list.innerHTML = state.chats.map(c => `
-            <div class="chat-session-item" data-id="${c.chat_id}">
-                <div class="memory-item-header">
-                    <h4>${escapeHtml(c.title)}</h4>
-                    <span class="badge ${c.is_locked ? 'badge-danger' : 'badge-info'}">
-                        <i class="fa-solid ${c.is_locked ? 'fa-lock' : 'fa-unlock'}"></i>
-                        ${c.is_locked ? 'LOCKED' : 'PUBLIC'}
-                    </span>
+            <div class="chat-history-item ${state.activeChat && state.activeChat.chat_id === c.chat_id ? 'active' : ''}" data-id="${c.chat_id}">
+                <div style="display: flex; align-items: center; gap: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    <i class="fa-solid ${c.is_locked ? 'fa-lock text-rose' : 'fa-message'}"></i>
+                    <span>${escapeHtml(c.title)}</span>
                 </div>
             </div>
         `).join("");
 
-        // Attach click listeners to list items
-        list.querySelectorAll(".chat-session-item").forEach(item => {
+        list.querySelectorAll(".chat-history-item").forEach(item => {
             item.addEventListener("click", () => {
                 const chatId = item.getAttribute("data-id");
                 const chat = state.chats.find(c => c.chat_id === chatId);
-                if (chat) selectChat(chat);
+                if (chat) selectChatSession(chat);
             });
         });
     }
 
-    function selectChat(chat) {
+    function selectChatSession(chat) {
         state.activeChat = chat;
+        renderSidebarChats();
+
         if (chat.is_locked) {
             elements.unlockChatId.value = chat.chat_id;
             elements.unlockPasswordInput.value = "";
             openModal("modalUnlockChat");
         } else {
-            // Unlocked chat — fetch directly
-            fetchUnlockedChatMessages(chat.chat_id);
+            fetchUnlockedMessages(chat.chat_id);
         }
     }
 
-    async function fetchUnlockedChatMessages(chatId) {
+    async function fetchUnlockedMessages(chatId) {
         try {
             const res = await fetch("/vault/chat/unlock", {
                 method: "POST",
@@ -483,42 +311,94 @@ document.addEventListener("DOMContentLoaded", () => {
             });
 
             const data = await res.json();
-            state.activeChatUnlockedMessages = data.messages || [];
-            renderActiveChat(chatId, false);
+            state.activeMessages = data.messages || [];
+            renderActiveChatSession(chatId);
         } catch (err) {
-            console.error("Failed to fetch unlocked chat", err);
+            console.error("Failed fetching unlocked messages", err);
         }
     }
 
-    function renderActiveChat(chatId, isLocked) {
-        elements.chatViewPlaceholder.classList.add("hidden");
-        elements.chatActiveBox.classList.remove("hidden");
-
+    function renderActiveChatSession(chatId) {
         const chat = state.chats.find(c => c.chat_id === chatId);
-        if (chat) {
-            elements.activeChatTitle.textContent = chat.title;
-            elements.activeChatStatus.innerHTML = isLocked
-                ? `<i class="fa-solid fa-lock text-rose"></i> Decrypted Session`
-                : `<i class="fa-solid fa-unlock text-emerald"></i> Public Session`;
-        }
+        if (!chat) return;
 
-        renderChatMessages(state.activeChatUnlockedMessages || []);
+        elements.currentChatTitle.textContent = chat.title;
+        elements.currentChatStatus.innerHTML = chat.is_locked
+            ? `<i class="fa-solid fa-lock text-rose"></i> Locked (Decrypted Session)`
+            : `<i class="fa-solid fa-lock-open text-emerald"></i> Unlocked Session`;
+
+        if (!state.activeMessages.length) {
+            elements.welcomeScreen.classList.remove("hidden");
+            elements.streamList.classList.add("hidden");
+        } else {
+            elements.welcomeScreen.classList.add("hidden");
+            elements.streamList.classList.remove("hidden");
+            elements.streamList.innerHTML = "";
+            state.activeMessages.forEach(m => {
+                addMessageRow(m.sender === "user" ? "user" : "ai", m.text);
+            });
+        }
     }
 
-    function renderChatMessages(messages) {
-        const scroll = elements.chatMessagesScroll;
-        if (!messages.length) {
-            scroll.innerHTML = `<div class="empty-state"><i class="fa-solid fa-message"></i><p>No messages in this chat session yet. Type below!</p></div>`;
+    function addMessageRow(sender, text, badgeType) {
+        const list = elements.streamList;
+        const row = document.createElement("div");
+        row.className = "msg-row";
+
+        let badgeHtml = "";
+        if (badgeType === "medical") {
+            badgeHtml = `<div class="msg-badge-tag medical"><i class="fa-solid fa-heart-pulse"></i> 🏥 Auto-Saved to Medical Vault</div>`;
+        } else if (badgeType === "safe") {
+            badgeHtml = `<div class="msg-badge-tag safe"><i class="fa-solid fa-shield-halved"></i> 🛡️ Verified Safe by Memory Firewall</div>`;
+        } else if (badgeType === "threat") {
+            badgeHtml = `<div class="msg-badge-tag threat"><i class="fa-solid fa-triangle-exclamation"></i> 🚨 Memory Firewall Blocked</div>`;
+        }
+
+        row.innerHTML = `
+            <div class="msg-avatar ${sender}">
+                <i class="fa-solid ${sender === 'user' ? 'fa-user' : 'fa-robot'}"></i>
+            </div>
+            <div class="msg-content">
+                ${badgeHtml}
+                <div>${formatMessageText(text)}</div>
+            </div>
+        `;
+
+        list.appendChild(row);
+        elements.messagesContainer.scrollTop = elements.messagesContainer.scrollHeight;
+    }
+
+    async function loadMedicalMemories() {
+        try {
+            const res = await fetch(`/vault/personal/list?user_id=${state.userId}&category=medical`);
+            const data = await res.json();
+            state.medicalMemories = data.memories || [];
+            renderMedicalDrawerList();
+            elements.medicalVaultBadgeCount.textContent = `${state.medicalMemories.length} Auto-Saved`;
+        } catch (err) {
+            console.error("Error loading medical vault", err);
+        }
+    }
+
+    function renderMedicalDrawerList() {
+        const list = elements.drawerMedicalList;
+        if (!state.medicalMemories.length) {
+            list.innerHTML = `<div class="empty-state"><i class="fa-solid fa-box-open"></i><p>No medical records auto-vaulted yet. Mention symptoms or blood tests in chat!</p></div>`;
             return;
         }
 
-        scroll.innerHTML = messages.map(m => `
-            <div class="chat-msg ${m.sender === 'user' ? 'user' : 'system'}">
-                ${escapeHtml(m.text)}
+        list.innerHTML = state.medicalMemories.map(m => `
+            <div class="memory-item-card" style="margin-bottom: 8px;">
+                <div class="memory-item-header">
+                    <h4 style="font-size: 13px; color: var(--emerald);">${escapeHtml(m.title)}</h4>
+                    <span class="badge badge-success">Score ${m.threat_score}</span>
+                </div>
+                <div class="memory-item-body">
+                    <p style="font-size: 12px;">${escapeHtml(m.content)}</p>
+                    <span style="font-size: 10px; color: var(--text-muted); display: block; margin-top: 4px;">${new Date(m.created_at * 1000).toLocaleString()}</span>
+                </div>
             </div>
         `).join("");
-
-        scroll.scrollTop = scroll.scrollHeight;
     }
 
     function openModal(modalId) {
@@ -531,17 +411,8 @@ document.addEventListener("DOMContentLoaded", () => {
         if (m) m.classList.add("hidden");
     }
 
-    function addAuditLog(text, type, score) {
-        const feed = elements.dashboardAuditFeed;
-        if (feed.querySelector(".empty-state")) feed.innerHTML = "";
-
-        const div = document.createElement("div");
-        div.className = "security-banner";
-        div.style.marginBottom = "8px";
-        div.style.borderColor = type === "danger" ? "var(--rose)" : "var(--emerald)";
-        div.innerHTML = `<i class="fa-solid ${type === 'danger' ? 'fa-triangle-exclamation text-rose' : 'fa-circle-check text-emerald'}"></i><div><strong>${text}</strong><p>Score: ${score}/100 • ${new Date().toLocaleTimeString()}</p></div>`;
-
-        feed.prepend(div);
+    function formatMessageText(str) {
+        return (str || "").replace(/\n/g, "<br>");
     }
 
     function escapeHtml(str) {
